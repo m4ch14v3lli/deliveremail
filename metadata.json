@@ -1,0 +1,6 @@
+{
+  "name": "Email Deliverability Health Checker",
+  "description": "Comprehensive domain email deliverability auditor with 200-domain bulk auditing, SPF/DKIM/DMARC/BIMI verification, DNSBL blacklists, Groq-powered phone call outreach scripts, and role-based 4-caller lead distribution.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
