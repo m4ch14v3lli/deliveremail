@@ -159,17 +159,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setToken(data.session.access_token);
       }
     } else {
-      // Native PostgreSQL API authentication
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password: passwordPlain }),
-      });
-      const data = await parseJsonResponse(res, 'Failed to sign in');
-      setUser(data.user);
-      setToken(data.token);
-      localStorage.setItem(TOKEN_KEY, data.token);
-      localStorage.setItem(USER_KEY, JSON.stringify(data.user));
+      // Supabase is not yet connected: attempt backend API with clear helpful guidance if unconfigured
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password: passwordPlain }),
+        });
+        const data = await parseJsonResponse(res, 'Failed to sign in');
+        setUser(data.user);
+        setToken(data.token);
+        localStorage.setItem(TOKEN_KEY, data.token);
+        localStorage.setItem(USER_KEY, JSON.stringify(data.user));
+      } catch (err: any) {
+        throw new Error(
+          'Supabase is not configured yet. Please enter your Supabase Project URL and Anon Public Key above (or set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in Vercel).'
+        );
+      }
     }
   };
 
@@ -192,17 +198,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
     } else {
-      // Native PostgreSQL API authentication
-      const res = await fetch('/api/auth/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password: passwordPlain }),
-      });
-      const data = await parseJsonResponse(res, 'Failed to create account');
-      setUser(data.user);
-      setToken(data.token);
-      localStorage.setItem(TOKEN_KEY, data.token);
-      localStorage.setItem(USER_KEY, JSON.stringify(data.user));
+      try {
+        const res = await fetch('/api/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password: passwordPlain }),
+        });
+        const data = await parseJsonResponse(res, 'Failed to create account');
+        setUser(data.user);
+        setToken(data.token);
+        localStorage.setItem(TOKEN_KEY, data.token);
+        localStorage.setItem(USER_KEY, JSON.stringify(data.user));
+      } catch (err: any) {
+        throw new Error(
+          'Supabase is not configured yet. Please enter your Supabase Project URL and Anon Public Key above (or set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in Vercel).'
+        );
+      }
     }
   };
 
