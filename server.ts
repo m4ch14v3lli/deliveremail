@@ -1,6 +1,5 @@
 import express from "express";
 import path from "path";
-import { createServer as createViteServer } from "vite";
 import dns from "dns/promises";
 import { GoogleGenAI } from "@google/genai";
 import { Groq } from "groq-sdk";
@@ -22,7 +21,7 @@ import {
   MAIN_ASSIGNER_EMAIL 
 } from "./src/db/leads.ts";
 
-const app = express();
+export const app = express();
 const portArgIndex = process.argv.indexOf("--port");
 const cliPort = portArgIndex !== -1 && process.argv[portArgIndex + 1] ? parseInt(process.argv[portArgIndex + 1], 10) : null;
 const PORT = cliPort || (process.env.PORT ? parseInt(process.env.PORT, 10) : 3000);
@@ -1234,13 +1233,26 @@ app.post(["/api/leads/clear", "/api/leads/clear/"], async (req, res) => {
   }
 });
 
+// API health check endpoints
+app.get(["/api", "/api/", "/api/health", "/api/health/"], (req, res) => {
+  res.json({
+    status: "ok",
+    service: "DNSDeliver Audit API",
+    time: new Date().toISOString(),
+    isVercel: Boolean(process.env.VERCEL),
+  });
+});
+
 // Guard: Ensure ANY unmatched /api/* route ALWAYS returns a JSON 404, never falling into Vite/HTML
 app.all("/api/*", (req, res) => {
   res.status(404).json({ error: `API route not found: ${req.method} ${req.originalUrl}` });
 });
 
+export default app;
+
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true, hmr: false },
       appType: "spa",
@@ -1264,4 +1276,7 @@ async function startServer() {
   });
 }
 
-startServer();
+// Only launch standalone HTTP listener when not running in Vercel serverless environment
+if (!process.env.VERCEL) {
+  startServer();
+}

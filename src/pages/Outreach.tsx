@@ -299,9 +299,16 @@ export const Outreach: React.FC = () => {
         }),
       });
 
-      const data = await res.json();
+      const contentType = res.headers.get('content-type') || '';
+      let data: any = null;
+      if (contentType.includes('application/json')) {
+        data = await res.json().catch(() => null);
+      } else {
+        const text = await res.text().catch(() => '');
+        throw new Error(res.status === 404 ? 'API route not reached (404). Please ensure backend serverless function is configured.' : `Server error (${res.status}): ${text.slice(0, 100)}`);
+      }
       if (!res.ok) {
-        throw new Error(data.error || 'Invalid caller passcode. Please verify your code.');
+        throw new Error(data?.error || 'Invalid caller passcode. Please verify your code.');
       }
 
       const session: CallerSession = {
@@ -352,9 +359,16 @@ export const Outreach: React.FC = () => {
           code: callerCodeInput.trim(),
         }),
       });
-      const data = await res.json();
+      const contentType = res.headers.get('content-type') || '';
+      let data: any = null;
+      if (contentType.includes('application/json')) {
+        data = await res.json().catch(() => null);
+      } else {
+        const text = await res.text().catch(() => '');
+        throw new Error(res.status === 404 ? 'API route not reached (404). Please ensure backend serverless function is configured.' : `Server error (${res.status}): ${text.slice(0, 100)}`);
+      }
       if (!res.ok) {
-        throw new Error(data.error || 'Invalid caller login code.');
+        throw new Error(data?.error || 'Invalid caller login code.');
       }
 
       const session: CallerSession = {

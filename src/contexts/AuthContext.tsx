@@ -38,6 +38,31 @@ const AuthContext = createContext<AuthContextType>({
 const TOKEN_KEY = 'app_auth_jwt_token';
 const USER_KEY = 'app_auth_user_data';
 
+async function parseJsonResponse(res: Response, fallbackError: string): Promise<any> {
+  const contentType = res.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      throw new Error(data?.error || `${fallbackError} (status ${res.status})`);
+    }
+    return data;
+  }
+
+  // Fallback for non-JSON response (e.g. 404/500 HTML from reverse proxy or serverless provider)
+  const rawText = await res.text().catch(() => '');
+  if (!res.ok) {
+    if (res.status === 404) {
+      throw new Error('API server route was not found (404). Please ensure the backend is running and vercel.json is deployed.');
+    }
+    throw new Error(`Server returned status ${res.status}: ${rawText.slice(0, 100) || fallbackError}`);
+  }
+  try {
+    return JSON.parse(rawText);
+  } catch {
+    throw new Error(`${fallbackError}: Server returned non-JSON response.`);
+  }
+}
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<AppUser | null>(null);
   const [token, setToken] = useState<string | null>(null);
@@ -140,10 +165,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password: passwordPlain }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to sign in');
-      }
+      const data = await parseJsonResponse(res, 'Failed to sign in');
       setUser(data.user);
       setToken(data.token);
       localStorage.setItem(TOKEN_KEY, data.token);
@@ -176,10 +198,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password: passwordPlain }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to create account');
-      }
+      const data = await parseJsonResponse(res, 'Failed to create account');
       setUser(data.user);
       setToken(data.token);
       localStorage.setItem(TOKEN_KEY, data.token);
