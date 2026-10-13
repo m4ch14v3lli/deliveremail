@@ -30,20 +30,10 @@ export interface QueueProspect {
   resultData?: any;
 }
 
-export const MAIN_ASSIGNER_EMAIL = 'melbourne258@gmail.com';
-
-export const FIXED_CALLERS_LIST = [
-  { key: 'larry', name: 'Larry', code: '@f1n3ssing_l4rry', email: 'larry@auditpro.io' },
-  { key: 'kelly', name: 'Kelly', code: '@4mg_kyl14n', email: 'kelly@auditpro.io' },
-  { key: 'ramadhan', name: 'Ramadhan', code: '@r4m4dh4n', email: 'ramadhan@auditpro.io' },
-  { key: 'melbourne', name: 'Melbourne', code: '@M3lbourn3', email: 'melbourne258@gmail.com' },
-];
-
 export interface CallerSession {
   callerKey: string;
   name: string;
-  email: string;
-  fixedCode: string;
+  email?: string;
   token?: string;
 }
 
@@ -178,12 +168,7 @@ export const Outreach: React.FC = () => {
   const [assignedLeads, setAssignedLeads] = useState<AssignedLeadItem[]>([]);
   const [isLoadingAssignedLeads, setIsLoadingAssignedLeads] = useState(false);
   const [allAssignedLeads, setAllAssignedLeads] = useState<AssignedLeadItem[]>([]);
-  const [allAssignedCounts, setAllAssignedCounts] = useState<{ larry: number; kelly: number; ramadhan: number; melbourne: number }>({
-    larry: 0,
-    kelly: 0,
-    ramadhan: 0,
-    melbourne: 0,
-  });
+  const [allAssignedCounts, setAllAssignedCounts] = useState<Record<string, number>>({});
   const [dashboardTab, setDashboardTab] = useState<'my-leads' | 'quick-sheet' | 'team-distribution' | 'all-queue'>(() => {
     if (typeof window !== 'undefined') {
       const stored = localStorage.getItem('caller_session');
@@ -191,11 +176,25 @@ export const Outreach: React.FC = () => {
     }
     return 'all-queue';
   });
-  const [sheetCallerFilter, setSheetCallerFilter] = useState<'all' | 'my' | 'larry' | 'kelly' | 'ramadhan' | 'melbourne'>('all');
+  const [sheetCallerFilter, setSheetCallerFilter] = useState<string>('all');
   const [sheetStatusFilter, setSheetStatusFilter] = useState<'all' | 'interested' | 'not_interested' | 'waiting' | 'pending'>('all');
   const [sheetSearch, setSheetSearch] = useState('');
   const [copiedPhoneId, setCopiedPhoneId] = useState<number | null>(null);
-  const [teamCallerFilter, setTeamCallerFilter] = useState<'all' | 'larry' | 'kelly' | 'ramadhan' | 'melbourne'>('all');
+  const [teamCallerFilter, setTeamCallerFilter] = useState<string>('all');
+
+  // Dynamic active caller list derived from current session and assigned leads (no hardcoded credentials)
+  const activeCallerList = React.useMemo(() => {
+    const map = new Map<string, { key: string; name: string }>();
+    if (currentCaller?.callerKey) {
+      map.set(currentCaller.callerKey, { key: currentCaller.callerKey, name: currentCaller.name });
+    }
+    allAssignedLeads.forEach(lead => {
+      if (lead.callerKey && !map.has(lead.callerKey)) {
+        map.set(lead.callerKey, { key: lead.callerKey, name: lead.callerName || lead.callerKey });
+      }
+    });
+    return Array.from(map.values());
+  }, [allAssignedLeads, currentCaller]);
   const [leadStatusFilter, setLeadStatusFilter] = useState<string>('all');
   const [isDistributingNow, setIsDistributingNow] = useState(false);
   const [distributionMsg, setDistributionMsg] = useState<string | null>(null);
@@ -246,22 +245,12 @@ export const Outreach: React.FC = () => {
   };
 
   useEffect(() => {
-    // Check if coming from Caller Access Portal or if session was stored
-    if (location.state?.fromCallerLogin) {
-      try {
-        const stored = localStorage.getItem('caller_session');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          setCurrentCaller(parsed);
-          setCallerName(parsed.name);
-          setDashboardTab('quick-sheet');
-          setCallerLoginSuccessToast(`Welcome back, ${parsed.name}! Successfully unlocked your queue.`);
-          setTimeout(() => setCallerLoginSuccessToast(null), 4000);
-          loadCallerLeads(parsed.callerKey);
-        }
-      } catch {}
+    // Dedicated caller routing: Callers only see their assigned leads and spreadsheet at /caller
+    const stored = localStorage.getItem('caller_session');
+    if (stored && !user) {
+      navigate('/caller', { replace: true });
     }
-  }, [location.state]);
+  }, [user, navigate]);
 
   useEffect(() => {
     if (currentCaller) {
@@ -283,57 +272,34 @@ export const Outreach: React.FC = () => {
     setInlineCodeLoading(true);
     setInlineCodeError(null);
     try {
-      const match = FIXED_CALLERS_LIST.find(c => {
-        const a = c.code.toLowerCase();
-        const b = codeToTest.toLowerCase();
-        return a === b || a === `@${b}` || `@${a.replace(/^@/, '')}` === `@${b.replace(/^@/, '')}`;
+      const res = await fetch('/api/caller/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code: codeToTest,
+        }),
       });
 
-      let callerData: any = null;
-      let token: string = '';
-
-      try {
-        const res = await fetch('/api/caller/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            code: codeToTest,
-            name: match?.name || undefined,
-            email: match?.email || undefined,
-          }),
-        });
-
-        const contentType = res.headers.get('content-type') || '';
-        if (contentType.includes('application/json')) {
-          const data = await res.json().catch(() => null);
-          if (res.ok && data?.caller) {
-            callerData = data.caller;
-            token = data.token || '';
-          }
-        }
-      } catch (networkErr) {
-        console.warn('Backend caller API offline, checking presets', networkErr);
+      const contentType = res.headers.get('content-type') || '';
+      let data: any = null;
+      if (contentType.includes('application/json')) {
+        data = await res.json().catch(() => null);
+      } else {
+        const text = await res.text().catch(() => '');
+        throw new Error(res.status === 404 ? 'API service unreachable.' : `Server response (${res.status}): ${text.slice(0, 100)}`);
       }
 
-      if (!callerData && match) {
-        callerData = {
-          callerKey: match.key,
-          name: match.name,
-          email: match.email,
-          fixedCode: match.code,
-        };
-        token = `caller_${match.key}_${Date.now()}`;
+      if (!res.ok || !data?.caller) {
+        throw new Error(data?.error || 'Invalid caller passcode. Please verify your assigned access code.');
       }
 
-      if (!callerData) {
-        throw new Error('Invalid caller passcode. Please verify your code (e.g. @f1n3ssing_l4rry, @4mg_kyl14n, @r4m4dh4n, @M3lbourn3).');
-      }
+      const callerData = data.caller;
+      const token = data.token || '';
 
       const session: CallerSession = {
         callerKey: callerData.callerKey,
         name: callerData.name,
-        email: callerData.email || (match ? match.email : ''),
-        fixedCode: callerData.fixedCode || match?.code,
+        email: callerData.email || '',
         token: token,
       };
 
@@ -363,62 +329,41 @@ export const Outreach: React.FC = () => {
     if (e) e.preventDefault();
     const code = callerCodeInput.trim();
     if (!code) {
-      setCallerLoginError('Please enter your fixed user code (e.g. @f1n3ssing_l4rry, @4mg_kyl14n, @r4m4dh4n, @M3lbourn3).');
+      setCallerLoginError('Please enter your assigned access code.');
       return;
     }
     setCallerLoginLoading(true);
     setCallerLoginError(null);
     try {
-      const match = FIXED_CALLERS_LIST.find(c => {
-        const a = c.code.toLowerCase();
-        const b = code.toLowerCase();
-        return a === b || a === `@${b}` || `@${a.replace(/^@/, '')}` === `@${b.replace(/^@/, '')}`;
+      const res = await fetch('/api/caller/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: callerNameInput.trim() || undefined,
+          email: callerEmailInput.trim() || undefined,
+          code: code,
+        }),
       });
-
-      let callerData: any = null;
-      let token: string = '';
-
-      try {
-        const res = await fetch('/api/caller/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: callerNameInput.trim() || undefined,
-            email: callerEmailInput.trim() || undefined,
-            code: code,
-          }),
-        });
-        const contentType = res.headers.get('content-type') || '';
-        if (contentType.includes('application/json')) {
-          const data = await res.json().catch(() => null);
-          if (res.ok && data?.caller) {
-            callerData = data.caller;
-            token = data.token || '';
-          }
-        }
-      } catch (networkErr) {
-        console.warn('Backend caller check offline, checking presets', networkErr);
+      const contentType = res.headers.get('content-type') || '';
+      let data: any = null;
+      if (contentType.includes('application/json')) {
+        data = await res.json().catch(() => null);
+      } else {
+        const text = await res.text().catch(() => '');
+        throw new Error(res.status === 404 ? 'API service unreachable.' : `Server response (${res.status}): ${text.slice(0, 100)}`);
       }
 
-      if (!callerData && match) {
-        callerData = {
-          callerKey: match.key,
-          name: callerNameInput.trim() || match.name,
-          email: callerEmailInput.trim() || match.email,
-          fixedCode: match.code,
-        };
-        token = `caller_${match.key}_${Date.now()}`;
+      if (!res.ok || !data?.caller) {
+        throw new Error(data?.error || 'Invalid caller passcode. Please verify your assigned code.');
       }
 
-      if (!callerData) {
-        throw new Error('Invalid caller passcode. Please verify your assigned code.');
-      }
+      const callerData = data.caller;
+      const token = data.token || '';
 
       const session: CallerSession = {
         callerKey: callerData.callerKey,
         name: callerData.name,
         email: callerData.email || callerEmailInput.trim(),
-        fixedCode: callerData.fixedCode || match?.code,
         token: token,
       };
       localStorage.setItem('caller_session', JSON.stringify(session));
@@ -443,13 +388,6 @@ export const Outreach: React.FC = () => {
     setCurrentCaller(null);
     setAssignedLeads([]);
     setDashboardTab('all-queue');
-  };
-
-  const handleQuickSelectCaller = (c: { key: string; name: string; code: string; email: string }) => {
-    setCallerNameInput(c.name);
-    setCallerEmailInput(c.email);
-    setCallerCodeInput(c.code);
-    setCallerLoginError(null);
   };
 
   const handleUpdateLeadStatus = async (leadId: number, newStatus: string, notes?: string) => {
@@ -487,7 +425,7 @@ export const Outreach: React.FC = () => {
 
   const handleDistributeLeadsInOutreach = async () => {
     if (queue.length === 0) {
-      alert("No bulk audited domains found in queue. Run a bulk audit or load sample domains first.");
+      alert("No bulk audited domains found in queue. Please run a bulk audit first.");
       return;
     }
     try {
@@ -506,7 +444,7 @@ export const Outreach: React.FC = () => {
             resultData: q.resultData,
           })),
           leadsPerCaller: 25,
-          assignerEmail: MAIN_ASSIGNER_EMAIL,
+          assignerEmail: user?.email || 'admin@company.com',
         }),
       });
       if (!res.ok) {
@@ -515,7 +453,7 @@ export const Outreach: React.FC = () => {
       }
       const data = await res.json();
       setDistributionMsg(
-        `Split ${data.totalDistributed} leads equally to the 4 callers by main assigner melbourne258@gmail.com without duplicates: Larry (25), Kelly (25), Ramadhan (25), and Melbourne (25).`
+        `Successfully split ${data.totalDistributed} leads equally across callers without duplicates (25 unique leads each).`
       );
       if (currentCaller) {
         await loadCallerLeads(currentCaller.callerKey);
@@ -537,10 +475,7 @@ export const Outreach: React.FC = () => {
       if (sheetCallerFilter === 'all') {
         return allAssignedLeads;
       }
-      if (['larry', 'kelly', 'ramadhan', 'melbourne'].includes(sheetCallerFilter)) {
-        return allAssignedLeads.filter(l => l.callerKey === sheetCallerFilter);
-      }
-      return allAssignedLeads;
+      return allAssignedLeads.filter(l => l.callerKey === sheetCallerFilter);
     }
     // Fallback: if no leads distributed to DB yet, adapt from queue so callers can still preview
     return queue.map((q, idx) => ({
@@ -555,7 +490,7 @@ export const Outreach: React.FC = () => {
       status: 'pending',
       notes: null,
       resultData: q.resultData,
-      assignedBy: MAIN_ASSIGNER_EMAIL,
+      assignedBy: user?.email || 'admin@company.com',
       assignedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }));
@@ -1113,114 +1048,64 @@ ${currentScript.ownerScript.objections.map(o => `* "${o.pushback}"\n  -> Rep: "$
             </div>
           </div>
         ) : (
-          /* DEDICATED CALLER CODE ACCESS POINT */
-          <div className="mb-6 bg-gradient-to-r from-indigo-50 via-white to-amber-50/60 border-2 border-indigo-200 rounded-sm p-4 sm:p-5 shadow-xs">
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-3 border-b border-indigo-100">
-              <div className="flex items-start sm:items-center gap-3">
-                <div className="p-2.5 bg-indigo-600 text-white rounded-xs shadow-xs shrink-0">
-                  <Key className="w-5 h-5" />
+          /* SECURE CALLER ACCESS BAR */
+          <div className="mb-6 bg-white border border-gray-200 rounded-sm p-4 shadow-xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-indigo-50 text-indigo-700 rounded-xs shrink-0">
+                  <Key className="w-4 h-4" />
                 </div>
                 <div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-indigo-800 bg-indigo-100 px-2 py-0.5 rounded-2xs border border-indigo-200">
-                      Caller Access Gateway
-                    </span>
-                    <h3 className="text-base font-black text-gray-950 tracking-tight">
-                      Enter Caller Code to Access Assigned Leads
-                    </h3>
-                  </div>
-                  <p className="text-xs text-gray-600 mt-1 max-w-xl">
-                    Put in your assigned secret code below to unlock your 25 leads, access the interactive Call Spreadsheet, and phone outreach scripts without duplicates.
+                  <h3 className="text-xs font-bold text-gray-900 uppercase tracking-wider">
+                    Outreach Caller Access
+                  </h3>
+                  <p className="text-xs text-gray-500">
+                    Enter your assigned access passcode to unlock your 25 leads.
                   </p>
                 </div>
               </div>
 
-              {/* Inline Passcode Entry Form */}
+              {/* Secure Passcode Entry Form */}
               <form 
                 onSubmit={(e) => {
                   e.preventDefault();
                   handleVerifyDirectCode();
                 }} 
-                className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full lg:w-auto"
+                className="flex items-center gap-2"
               >
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={inlineCodeInput}
-                    onChange={(e) => setInlineCodeInput(e.target.value)}
-                    placeholder="Enter Code (e.g. @f1n3ssing_l4rry)"
-                    className="w-full sm:w-64 px-3.5 py-2 text-xs font-mono font-bold bg-white border-2 border-indigo-300 rounded-xs text-gray-900 placeholder:text-gray-400 placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:border-indigo-600"
-                  />
-                </div>
+                <input
+                  type="password"
+                  value={inlineCodeInput}
+                  onChange={(e) => setInlineCodeInput(e.target.value)}
+                  placeholder="Enter caller passcode"
+                  className="w-48 sm:w-56 px-3 py-1.5 text-xs font-mono bg-white border border-gray-300 rounded-xs text-gray-900 focus:outline-none focus:border-indigo-600"
+                />
                 <button
                   type="submit"
                   disabled={inlineCodeLoading || !inlineCodeInput.trim()}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 text-white text-xs font-bold uppercase tracking-wider rounded-xs cursor-pointer shadow-xs transition-colors flex items-center justify-center gap-1.5 whitespace-nowrap"
+                  className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 text-white text-xs font-bold rounded-xs cursor-pointer shadow-2xs transition-colors flex items-center gap-1.5 whitespace-nowrap"
                 >
                   {inlineCodeLoading ? (
-                    <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      <span>Verifying...</span>
-                    </>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
                   ) : (
-                    <>
-                      <span>Unlock & Enter</span>
-                      <ArrowRight className="w-3.5 h-3.5" />
-                    </>
+                    <span>Unlock Leads</span>
                   )}
                 </button>
+                <Link
+                  to="/caller-access"
+                  className="text-xs font-semibold text-indigo-700 hover:underline px-2 py-1.5 whitespace-nowrap"
+                >
+                  Portal Login →
+                </Link>
               </form>
             </div>
 
             {inlineCodeError && (
-              <div className="mt-3 p-2.5 bg-red-50 border border-red-200 rounded-xs text-xs text-red-700 flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-red-500 shrink-0" />
+              <div className="mt-2.5 p-2 bg-red-50 border border-red-200 rounded-xs text-xs text-red-700 flex items-center gap-2">
+                <AlertTriangle className="w-3.5 h-3.5 text-red-500 shrink-0" />
                 <span>{inlineCodeError}</span>
               </div>
             )}
-
-            {/* Quick 1-Click Caller Pills & Standalone Gateway Link */}
-            <div className="mt-3 pt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500">
-                  Quick Select Caller Code:
-                </span>
-                {FIXED_CALLERS_LIST.map((caller) => (
-                  <button
-                    key={caller.key}
-                    type="button"
-                    onClick={() => {
-                      setInlineCodeInput(caller.code);
-                      handleVerifyDirectCode(caller.code);
-                    }}
-                    disabled={inlineCodeLoading}
-                    className="px-2.5 py-1 bg-white hover:bg-indigo-50 border border-gray-200 hover:border-indigo-300 rounded-xs text-gray-800 hover:text-indigo-900 text-xs font-semibold flex items-center gap-1.5 cursor-pointer shadow-2xs transition-colors"
-                  >
-                    <span className="font-bold">{caller.name}</span>
-                    <span className="font-mono text-[10px] text-indigo-600 bg-indigo-50 px-1 rounded-2xs">
-                      {caller.code}
-                    </span>
-                  </button>
-                ))}
-              </div>
-
-              <div className="flex items-center gap-2 shrink-0">
-                <Link
-                  to="/caller-access"
-                  className="text-xs font-bold text-indigo-700 hover:text-indigo-900 flex items-center gap-1 underline underline-offset-2"
-                >
-                  <Key className="w-3.5 h-3.5" />
-                  <span>Open Fullscreen Passcode Gateway →</span>
-                </Link>
-                <button
-                  type="button"
-                  onClick={() => setShowCallerModal(true)}
-                  className="text-xs text-gray-500 hover:text-gray-800 cursor-pointer"
-                >
-                  (Advanced Sign-In)
-                </button>
-              </div>
-            </div>
           </div>
         )}
 
@@ -1297,10 +1182,10 @@ ${currentScript.ownerScript.objections.map(o => `* "${o.pushback}"\n  -> Rep: "$
                     onClick={handleDistributeLeadsInOutreach}
                     disabled={isDistributingNow}
                     className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xs transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
-                    title="Evenly split 25 leads each via main assigner melbourne258@gmail.com to Larry, Kelly, Ramadhan, and Melbourne"
+                    title="Evenly split 25 leads each to team callers without duplicates"
                   >
                     {isDistributingNow ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Users className="w-3.5 h-3.5" />}
-                    <span>Assign 25 Leads to 4 Callers</span>
+                    <span>Assign 25 Leads to Callers</span>
                   </button>
                 )}
               </div>
@@ -1317,7 +1202,7 @@ ${currentScript.ownerScript.objections.map(o => `* "${o.pushback}"\n  -> Rep: "$
                     <div className="max-w-md mx-auto">
                       <h3 className="text-base font-bold text-gray-900">Caller Login Required</h3>
                       <p className="text-xs text-gray-500 mt-1">
-                        To view your assigned 25 leads partition without duplicates, please sign in with your Name, Email, and Fixed Code (Larry, Kelly, Ramadhan, or Melbourne).
+                        To view your assigned 25 leads partition without duplicates, please sign in with your Name, Email, and assigned passcode.
                       </p>
                     </div>
                     <button
@@ -1682,9 +1567,9 @@ ${currentScript.ownerScript.objections.map(o => `* "${o.pushback}"\n  -> Rep: "$
                           sheetCallerFilter === 'all' ? 'bg-white text-gray-900 shadow-xs font-black' : 'text-gray-600 hover:text-gray-900'
                         }`}
                       >
-                        All 4 Callers ({allAssignedLeads.length})
+                        All Callers ({allAssignedLeads.length})
                       </button>
-                      {FIXED_CALLERS_LIST.map(c => (
+                      {activeCallerList.map(c => (
                         <button
                           key={c.key}
                           type="button"
@@ -1693,7 +1578,7 @@ ${currentScript.ownerScript.objections.map(o => `* "${o.pushback}"\n  -> Rep: "$
                             sheetCallerFilter === c.key ? 'bg-white text-indigo-900 shadow-xs font-black' : 'text-gray-600 hover:text-gray-900'
                           }`}
                         >
-                          {c.name} ({allAssignedCounts[c.key as keyof typeof allAssignedCounts] || 0})
+                          {c.name} ({allAssignedCounts[c.key] || 0})
                         </button>
                       ))}
                     </div>
@@ -1943,71 +1828,67 @@ ${currentScript.ownerScript.objections.map(o => `* "${o.pushback}"\n  -> Rep: "$
             {/* TAB CONTENT 2: 4-CALLER TEAM DISTRIBUTION */}
             {dashboardTab === 'team-distribution' && (
               <div className="space-y-6">
-                {/* 4 Caller Overview Cards */}
+                {/* Team Caller Overview Cards */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                  {FIXED_CALLERS_LIST.map(caller => {
-                    const count = allAssignedCounts[caller.key as keyof typeof allAssignedCounts] || 0;
-                    const callerLeads = allAssignedLeads.filter(l => l.callerKey === caller.key);
-                    const booked = callerLeads.filter(l => l.status === 'meeting_booked').length;
-                    const called = callerLeads.filter(l => l.status !== 'pending').length;
-                    const isCurrent = currentCaller?.callerKey === caller.key;
+                  {activeCallerList.length === 0 ? (
+                    <div className="col-span-full bg-white border border-gray-200 rounded-sm p-6 text-center text-xs text-gray-500">
+                      No active caller assignments yet. Callers sign in with their passcode to unlock their assigned leads.
+                    </div>
+                  ) : (
+                    activeCallerList.map(caller => {
+                      const count = allAssignedCounts[caller.key] || 0;
+                      const callerLeads = allAssignedLeads.filter(l => l.callerKey === caller.key);
+                      const booked = callerLeads.filter(l => l.status === 'meeting_booked').length;
+                      const called = callerLeads.filter(l => l.status !== 'pending').length;
+                      const isCurrent = currentCaller?.callerKey === caller.key;
 
-                    return (
-                      <div 
-                        key={caller.key}
-                        className={`bg-white border rounded-sm p-4 shadow-xs relative flex flex-col justify-between ${
-                          isCurrent ? 'border-emerald-500 ring-1 ring-emerald-500 bg-emerald-50/10' : 'border-gray-200'
-                        }`}
-                      >
-                        <div>
-                          <div className="flex items-center justify-between mb-1.5">
-                            <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
-                              Caller
-                            </span>
-                            {isCurrent && (
-                              <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.5 rounded-2xs">
-                                Active You
+                      return (
+                        <div 
+                          key={caller.key}
+                          className={`bg-white border rounded-sm p-4 shadow-xs relative flex flex-col justify-between ${
+                            isCurrent ? 'border-emerald-500 ring-1 ring-emerald-500 bg-emerald-50/10' : 'border-gray-200'
+                          }`}
+                        >
+                          <div>
+                            <div className="flex items-center justify-between mb-1.5">
+                              <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
+                                Caller
                               </span>
-                            )}
-                          </div>
-                          <h4 className="text-base font-bold text-gray-900 flex items-center gap-1.5">
-                            {caller.name}
-                          </h4>
-                          <span className="font-mono text-[11px] text-gray-500 font-medium block">
-                            Code: <strong className="text-gray-800">{caller.code}</strong>
-                          </span>
+                              {isCurrent && (
+                                <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.5 rounded-2xs">
+                                  Active You
+                                </span>
+                              )}
+                            </div>
+                            <h4 className="text-base font-bold text-gray-900 flex items-center gap-1.5">
+                              {caller.name}
+                            </h4>
 
-                          <div className="mt-3 pt-3 border-t border-gray-100 space-y-1 text-xs">
-                            <div className="flex justify-between">
-                              <span className="text-gray-500">Allocated Leads:</span>
-                              <span className="font-bold text-gray-900">{count} / 25</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-gray-500">Progress:</span>
-                              <span className="font-medium text-gray-700">{called} called</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-gray-500">Meetings Booked:</span>
-                              <span className="font-bold text-emerald-700">{booked} 🏆</span>
+                            <div className="mt-3 pt-3 border-t border-gray-100 space-y-1 text-xs">
+                              <div className="flex justify-between">
+                                <span className="text-gray-500">Allocated Leads:</span>
+                                <span className="font-bold text-gray-900">{count} / 25</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-gray-500">Progress:</span>
+                                <span className="font-medium text-gray-700">{called} called</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-gray-500">Meetings Booked:</span>
+                                <span className="font-bold text-emerald-700">{booked} 🏆</span>
+                              </div>
                             </div>
                           </div>
-                        </div>
 
-                        <div className="mt-4 pt-3 border-t border-gray-100">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              handleQuickSelectCaller(caller);
-                              setShowCallerModal(true);
-                            }}
-                            className="w-full py-1.5 text-xs font-bold text-center bg-gray-50 hover:bg-gray-100 text-gray-800 border border-gray-200 rounded-xs cursor-pointer transition-colors"
-                          >
-                            Sign In as {caller.name}
-                          </button>
+                          {isCurrent && (
+                            <div className="mt-3 py-1 px-2 bg-emerald-50 text-emerald-800 rounded-2xs text-center font-bold text-[11px]">
+                              ✓ Currently Authenticated
+                            </div>
+                          )}
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })
+                  )}
                 </div>
 
                 {/* Team Filter Bar */}
@@ -2022,7 +1903,7 @@ ${currentScript.ownerScript.objections.map(o => `* "${o.pushback}"\n  -> Rep: "$
                     >
                       All Callers ({allAssignedLeads.length})
                     </button>
-                    {FIXED_CALLERS_LIST.map(c => (
+                    {activeCallerList.map(c => (
                       <button
                         key={c.key}
                         type="button"
@@ -2031,7 +1912,7 @@ ${currentScript.ownerScript.objections.map(o => `* "${o.pushback}"\n  -> Rep: "$
                           teamCallerFilter === c.key ? 'bg-white text-indigo-900 shadow-xs font-black' : 'text-gray-600 hover:text-gray-900'
                         }`}
                       >
-                        {c.name} ({allAssignedCounts[c.key as keyof typeof allAssignedCounts] || 0})
+                        {c.name} ({allAssignedCounts[c.key] || 0})
                       </button>
                     ))}
                   </div>
@@ -3073,28 +2954,8 @@ ${currentScript.ownerScript.objections.map(o => `* "${o.pushback}"\n  -> Rep: "$
               </div>
 
               <p className="text-xs text-gray-500 mb-4">
-                Enter your name, email, and fixed caller code to access your exclusive 25 leads. This ensures no duplicate calls across the team.
+                Input your caller name, work email, and assigned secret passcode to access your assigned leads.
               </p>
-
-              {/* Quick Fill Preset Pills */}
-              <div className="mb-4 bg-gray-50 p-3 rounded-xs border border-gray-200 space-y-2">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500 block">
-                  Quick Select Caller Preset:
-                </span>
-                <div className="grid grid-cols-2 gap-2">
-                  {FIXED_CALLERS_LIST.map(caller => (
-                    <button
-                      key={caller.key}
-                      type="button"
-                      onClick={() => handleQuickSelectCaller(caller)}
-                      className="px-2.5 py-1.5 text-left bg-white hover:bg-indigo-50 border border-gray-200 hover:border-indigo-300 rounded-xs transition-colors cursor-pointer"
-                    >
-                      <span className="text-xs font-bold text-gray-900 block">{caller.name}</span>
-                      <span className="font-mono text-[10px] text-indigo-600 truncate block">{caller.code}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
 
               <form onSubmit={handleCallerLogin} className="space-y-3.5">
                 <div>
@@ -3106,7 +2967,7 @@ ${currentScript.ownerScript.objections.map(o => `* "${o.pushback}"\n  -> Rep: "$
                     required
                     value={callerNameInput}
                     onChange={e => setCallerNameInput(e.target.value)}
-                    placeholder="e.g. Larry"
+                    placeholder="Enter your name"
                     className="w-full px-3 py-2 text-xs border border-gray-300 rounded-sm focus:ring-1 focus:ring-gray-900 focus:border-gray-900"
                   />
                 </div>
@@ -3120,26 +2981,23 @@ ${currentScript.ownerScript.objections.map(o => `* "${o.pushback}"\n  -> Rep: "$
                     required
                     value={callerEmailInput}
                     onChange={e => setCallerEmailInput(e.target.value)}
-                    placeholder="e.g. larry@auditpro.io"
+                    placeholder="your.email@company.com"
                     className="w-full px-3 py-2 text-xs border border-gray-300 rounded-sm focus:ring-1 focus:ring-gray-900 focus:border-gray-900"
                   />
                 </div>
 
                 <div>
                   <label className="block text-xs font-semibold text-gray-700 mb-1">
-                    Fixed User Code <span className="text-red-500">*</span>
+                    Secret Access Passcode <span className="text-red-500">*</span>
                   </label>
                   <input
-                    type="text"
+                    type="password"
                     required
                     value={callerCodeInput}
                     onChange={e => setCallerCodeInput(e.target.value)}
-                    placeholder="e.g. @f1n3ssing_l4rry"
+                    placeholder="Enter assigned passcode"
                     className="w-full px-3 py-2 text-xs border border-gray-300 rounded-sm font-mono focus:ring-1 focus:ring-gray-900 focus:border-gray-900"
                   />
-                  <span className="text-[10px] text-gray-400 mt-1 block">
-                    Codes: Larry (@f1n3ssing_l4rry), Kelly (@4mg_kyl14n), Ramadhan (@r4m4dh4n), Melbourne (@M3lbourn3)
-                  </span>
                 </div>
 
                 {callerLoginError && (

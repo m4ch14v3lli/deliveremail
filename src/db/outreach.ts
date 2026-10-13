@@ -26,8 +26,8 @@ export async function saveOutreachScript(input: CreateOutreachInput) {
 
     return result[0];
   } catch (error) {
-    console.error('Failed to save outreach script to database:', error);
-    throw new Error('Database operation failed while saving outreach script.', { cause: error });
+    console.error('Failed to save outreach script:', error);
+    throw new Error('Unable to save outreach script.', { cause: error });
   }
 }
 
@@ -39,7 +39,7 @@ export async function getOutreachScriptsByUserId(userId: string) {
       .orderBy(desc(outreachScripts.createdAt));
   } catch (error) {
     console.error('Failed to get outreach scripts for user:', error);
-    throw new Error('Database operation failed while fetching outreach scripts.', { cause: error });
+    throw new Error('Unable to retrieve outreach scripts.', { cause: error });
   }
 }
 
@@ -52,6 +52,6 @@ export async function deleteOutreachScriptById(id: number, userId: string) {
     return result.length > 0;
   } catch (error) {
     console.error('Failed to delete outreach script:', error);
-    throw new Error('Database operation failed while deleting outreach script.', { cause: error });
+    throw new Error('Unable to delete outreach script.', { cause: error });
   }
 }

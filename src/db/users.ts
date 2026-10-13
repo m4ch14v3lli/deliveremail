@@ -20,8 +20,8 @@ export async function getOrCreateUser(uid: string, email: string) {
 
     return result[0];
   } catch (error) {
-    console.error('Failed to get or create user in database:', error);
-    throw new Error('Database operation failed for user synchronization.', { cause: error });
+    console.error('Failed to get or create user:', error);
+    throw new Error('Unable to synchronize user account. Please try again.', { cause: error });
   }
 }
 
@@ -31,7 +31,7 @@ export async function getUserByUid(uid: string) {
     return result[0] || null;
   } catch (error) {
     console.error('Failed to fetch user by UID:', error);
-    throw new Error('Database query failed. Please try again later.', { cause: error });
+    throw new Error('Unable to verify user account. Please try again.', { cause: error });
   }
 }
 
@@ -41,7 +41,7 @@ export async function getUserByEmail(email: string) {
     return result[0] || null;
   } catch (error) {
     console.error('Failed to fetch user by email:', error);
-    throw new Error('Database query failed. Please try again later.', { cause: error });
+    throw new Error('Unable to verify user email. Please try again.', { cause: error });
   }
 }
 

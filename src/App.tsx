@@ -9,6 +9,7 @@ import { History } from './pages/History';
 import { BulkAudit } from './pages/BulkAudit';
 import { Outreach } from './pages/Outreach';
 import { CallerAccess } from './pages/CallerAccess';
+import { CallerDashboard } from './pages/CallerDashboard';
 
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { user, loading } = useAuth();
@@ -51,8 +52,9 @@ export default function App() {
           />
           <Route path="/outreach" element={<Outreach />} />
           <Route path="/caller-access" element={<CallerAccess />} />
-          <Route path="/caller" element={<CallerAccess />} />
+          <Route path="/caller" element={<CallerDashboard />} />
           <Route path="/caller-login" element={<CallerAccess />} />
+          <Route path="/caller-dashboard" element={<CallerDashboard />} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>

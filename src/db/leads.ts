@@ -1,6 +1,6 @@
 import { db } from './index.ts';
 import { callers, leadAssignments } from './schema.ts';
-import { eq, desc, asc, sql } from 'drizzle-orm';
+import { eq, asc } from 'drizzle-orm';
 
 export interface CallerInfo {
   callerKey: string;
@@ -10,91 +10,93 @@ export interface CallerInfo {
   lastLoginAt?: Date | null;
 }
 
-export const MAIN_ASSIGNER_EMAIL = 'melbourne258@gmail.com';
-
-export const FIXED_CALLERS: Array<{ callerKey: string; name: string; fixedCode: string; defaultEmail: string }> = [
-  { callerKey: 'larry', name: 'Larry', fixedCode: '@f1n3ssing_l4rry', defaultEmail: 'larry@auditpro.io' },
-  { callerKey: 'kelly', name: 'Kelly', fixedCode: '@4mg_kyl14n', defaultEmail: 'kelly@auditpro.io' },
-  { callerKey: 'ramadhan', name: 'Ramadhan', fixedCode: '@r4m4dh4n', defaultEmail: 'ramadhan@auditpro.io' },
-  { callerKey: 'melbourne', name: 'Melbourne', fixedCode: '@M3lbourn3', defaultEmail: 'melbourne258@gmail.com' },
-];
-
 export async function ensureCallersInitialized() {
+  // Callers are created dynamically upon self-input or administration
+}
+
+export async function getRegisteredCallers(): Promise<Array<{ callerKey: string; name: string }>> {
   try {
-    for (const c of FIXED_CALLERS) {
-      await db.insert(callers)
-        .values({
-          callerKey: c.callerKey,
-          name: c.name,
-          fixedCode: c.fixedCode,
-          email: c.defaultEmail,
-        })
-        .onConflictDoUpdate({
-          target: callers.callerKey,
-          set: {
-            name: c.name,
-            fixedCode: c.fixedCode,
-            email: c.defaultEmail,
-          },
-        });
-    }
+    const list = await db.select().from(callers);
+    return list.map(c => ({
+      callerKey: c.callerKey,
+      name: c.name,
+    }));
   } catch (err) {
-    console.warn('ensureCallersInitialized notice:', err);
+    console.warn('getRegisteredCallers query notice:', err);
+    return [];
   }
 }
 
-export async function verifyCallerLogin(name: string, email: string, code: string): Promise<CallerInfo | null> {
+export async function verifyCallerLogin(name?: string, email?: string, code?: string): Promise<CallerInfo | null> {
   const cleanCode = (code || '').trim();
+  if (!cleanCode) return null;
   const cleanName = (name || '').trim();
   const cleanEmail = (email || '').trim().toLowerCase();
 
-  // Find matching caller by exact fixed code (case-insensitive for safety, supporting optional @)
-  const matched = FIXED_CALLERS.find(c => {
-    const codeA = c.fixedCode.toLowerCase();
-    const codeB = cleanCode.toLowerCase();
-    return codeA === codeB ||
-      codeA === `@${codeB}` ||
-      `@${codeA.replace(/^@/, '')}` === `@${codeB.replace(/^@/, '')}`;
-  });
-
-  if (!matched) {
-    return null;
-  }
-
-  const callerDisplayName = cleanName || matched.name;
-  const effectiveEmail = cleanEmail || matched.defaultEmail || `${matched.callerKey}@auditpro.io`;
-
-  // Update caller login info in database to persist their latest login and email
+  // 1. Check existing caller in database by passcode
   try {
-    const now = new Date();
-    await db.insert(callers)
-      .values({
-        callerKey: matched.callerKey,
-        name: callerDisplayName,
-        fixedCode: matched.fixedCode,
-        email: effectiveEmail,
-        lastLoginAt: now,
-      })
-      .onConflictDoUpdate({
-        target: callers.callerKey,
-        set: {
+    const allCallers = await db.select().from(callers);
+    const dbMatch = allCallers.find(c => {
+      const codeA = (c.fixedCode || '').toLowerCase().trim();
+      const codeB = cleanCode.toLowerCase().trim();
+      return codeA === codeB ||
+        codeA === `@${codeB}` ||
+        `@${codeA.replace(/^@/, '')}` === `@${codeB.replace(/^@/, '')}`;
+    });
+
+    if (dbMatch) {
+      const callerDisplayName = cleanName || dbMatch.name;
+      const effectiveEmail = cleanEmail || dbMatch.email || null;
+      const now = new Date();
+      await db.update(callers)
+        .set({
           name: callerDisplayName,
-          fixedCode: matched.fixedCode,
           email: effectiveEmail,
           lastLoginAt: now,
-        },
-      });
+        })
+        .where(eq(callers.callerKey, dbMatch.callerKey));
+
+      return {
+        callerKey: dbMatch.callerKey,
+        name: callerDisplayName,
+        fixedCode: dbMatch.fixedCode,
+        email: effectiveEmail,
+        lastLoginAt: now,
+      };
+    }
   } catch (err) {
-    console.warn('Failed to update caller in DB:', err);
+    console.warn('Database caller lookup notice:', err);
   }
 
-  return {
-    callerKey: matched.callerKey,
-    name: callerDisplayName,
-    fixedCode: matched.fixedCode,
-    email: effectiveEmail,
-    lastLoginAt: new Date(),
-  };
+  // 2. Caller self-registration: If entering a new access passcode
+  if (cleanCode.length >= 2) {
+    const callerKey = `caller_${cleanCode.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() || Date.now()}`;
+    const callerDisplayName = cleanName || 'Team Caller';
+    const effectiveEmail = cleanEmail || null;
+    const now = new Date();
+
+    try {
+      await db.insert(callers).values({
+        callerKey,
+        name: callerDisplayName,
+        fixedCode: cleanCode,
+        email: effectiveEmail,
+        lastLoginAt: now,
+      }).onConflictDoNothing();
+    } catch (insertErr) {
+      console.warn('Caller registration notice:', insertErr);
+    }
+
+    return {
+      callerKey,
+      name: callerDisplayName,
+      fixedCode: cleanCode,
+      email: effectiveEmail,
+      lastLoginAt: now,
+    };
+  }
+
+  return null;
 }
 
 export interface RawLeadInput {
@@ -109,11 +111,9 @@ export interface RawLeadInput {
 export async function distributeLeadsEqually(
   leads: RawLeadInput[],
   leadsPerCaller: number = 25,
-  assignerEmail: string = MAIN_ASSIGNER_EMAIL
+  assignerEmail: string = 'team-admin@company.com'
 ) {
   try {
-    await ensureCallersInitialized();
-
     // 1. Deduplicate by domain
     const uniqueMap = new Map<string, RawLeadInput>();
     for (const lead of leads) {
@@ -129,34 +129,35 @@ export async function distributeLeadsEqually(
       const isAStrong = (a.grade?.startsWith('D') || a.grade?.startsWith('F')) ? 1 : 0;
       const isBStrong = (b.grade?.startsWith('D') || b.grade?.startsWith('F')) ? 1 : 0;
       if (isAStrong !== isBStrong) return isBStrong - isAStrong;
-      // Secondary: lower score first (higher deliverability urgency)
       return (a.score ?? 50) - (b.score ?? 50);
     });
 
-    // 3. Clear existing lead assignments to ensure a fresh, non-duplicate batch
+    // 3. Clear existing lead assignments for a fresh, non-duplicate batch
     await db.delete(leadAssignments);
 
     const batchId = `batch_${Date.now()}`;
-    const callerKeys = FIXED_CALLERS.map(c => c.callerKey);
-    const callerNames: Record<string, string> = {
-      larry: 'Larry',
-      kelly: 'Kelly',
-      ramadhan: 'Ramadhan',
-      melbourne: 'Melbourne',
-    };
+    const registered = await getRegisteredCallers();
+    
+    // If callers are registered, partition among them; otherwise use dynamic caller partitions
+    const targetCallers = registered.length > 0 ? registered.slice(0, 4) : [
+      { callerKey: 'caller_1', name: 'Caller 1' },
+      { callerKey: 'caller_2', name: 'Caller 2' },
+      { callerKey: 'caller_3', name: 'Caller 3' },
+      { callerKey: 'caller_4', name: 'Caller 4' },
+    ];
 
-    // Calculate how many to assign per caller (up to leadsPerCaller, e.g. 25 each = 100 total)
+    const callerKeys = targetCallers.map(c => c.callerKey);
+    const callerNames: Record<string, string> = {};
+    const callerBuckets: Record<string, RawLeadInput[]> = {};
+    for (const c of targetCallers) {
+      callerNames[c.callerKey] = c.name;
+      callerBuckets[c.callerKey] = [];
+    }
+
     const totalToAssign = Math.min(sortedLeads.length, leadsPerCaller * callerKeys.length);
     const leadsToDistribute = sortedLeads.slice(0, totalToAssign);
 
-    const callerBuckets: Record<string, RawLeadInput[]> = {
-      larry: [],
-      kelly: [],
-      ramadhan: [],
-      melbourne: [],
-    };
-
-    // Round-robin distribution to avoid duplicates and ensure equal splitting
+    // Round-robin distribution without duplicate domains
     leadsToDistribute.forEach((lead, idx) => {
       const assignedCaller = callerKeys[idx % callerKeys.length];
       if (callerBuckets[assignedCaller].length < leadsPerCaller) {
@@ -189,21 +190,21 @@ export async function distributeLeadsEqually(
       await db.insert(leadAssignments).values(rowsToInsert);
     }
 
+    const distSummary: Record<string, number> = {};
+    for (const k of callerKeys) {
+      distSummary[k] = callerBuckets[k].length;
+    }
+
     return {
       success: true,
       batchId,
       assignedBy: assignerEmail,
       totalDistributed: rowsToInsert.length,
-      distribution: {
-        larry: callerBuckets.larry.length,
-        kelly: callerBuckets.kelly.length,
-        ramadhan: callerBuckets.ramadhan.length,
-        melbourne: callerBuckets.melbourne.length,
-      },
+      distribution: distSummary,
     };
   } catch (error) {
     console.error('Failed to distribute leads:', error);
-    throw new Error('Database operation failed while distributing leads.', { cause: error });
+    throw new Error('Unable to complete lead distribution.', { cause: error });
   }
 }
 
@@ -216,7 +217,7 @@ export async function getLeadsForCaller(callerKey: string) {
       .orderBy(asc(leadAssignments.id));
   } catch (error) {
     console.error('Failed to get leads for caller:', error);
-    throw new Error('Database operation failed while fetching caller leads.', { cause: error });
+    throw new Error('Unable to retrieve assigned leads.', { cause: error });
   }
 }
 
@@ -227,7 +228,7 @@ export async function getAllAssignedLeads() {
       .orderBy(asc(leadAssignments.callerKey), asc(leadAssignments.id));
   } catch (error) {
     console.error('Failed to get all assigned leads:', error);
-    throw new Error('Database operation failed while fetching all assigned leads.', { cause: error });
+    throw new Error('Unable to retrieve leads queue.', { cause: error });
   }
 }
 
@@ -247,7 +248,7 @@ export async function updateLeadStatus(id: number, status: string, notes?: strin
     return result[0];
   } catch (error) {
     console.error('Failed to update lead status:', error);
-    throw new Error('Database operation failed while updating lead status.', { cause: error });
+    throw new Error('Unable to update lead outcome.', { cause: error });
   }
 }
 
@@ -257,6 +258,6 @@ export async function clearAllLeadAssignments() {
     return result.length;
   } catch (error) {
     console.error('Failed to clear lead assignments:', error);
-    throw new Error('Database operation failed while clearing lead assignments.', { cause: error });
+    throw new Error('Unable to clear lead assignments.', { cause: error });
   }
 }

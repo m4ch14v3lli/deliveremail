@@ -24,8 +24,8 @@ export async function saveAudit(input: CreateAuditInput) {
 
     return result[0];
   } catch (error) {
-    console.error('Failed to save audit to database:', error);
-    throw new Error('Database operation failed while saving audit record.', { cause: error });
+    console.error('Failed to save audit:', error);
+    throw new Error('Unable to save audit record.', { cause: error });
   }
 }
 
@@ -52,7 +52,7 @@ export async function getAuditsByUserId(userId: string, email?: string) {
       .orderBy(desc(audits.timestamp));
   } catch (error) {
     console.error('Failed to get audits for user:', error);
-    throw new Error('Database operation failed while fetching audits.', { cause: error });
+    throw new Error('Unable to fetch audit records.', { cause: error });
   }
 }
 
@@ -80,7 +80,7 @@ export async function deleteAuditById(id: number, userId: string, email?: string
     return result.length > 0;
   } catch (error) {
     console.error('Failed to delete audit:', error);
-    throw new Error('Database operation failed while deleting audit.', { cause: error });
+    throw new Error('Unable to delete audit record.', { cause: error });
   }
 }
 
@@ -111,6 +111,6 @@ export async function clearAllAuditsByUserId(userId: string, email?: string): Pr
     return result.length + remaining.length;
   } catch (error) {
     console.error('Failed to clear all audits for user:', error);
-    throw new Error('Database operation failed while clearing audits.', { cause: error });
+    throw new Error('Unable to clear audit records.', { cause: error });
   }
 }

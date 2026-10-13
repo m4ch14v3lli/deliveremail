@@ -19,63 +19,7 @@ interface BulkDomainJob {
   resultData?: DomainAuditResult;
 }
 
-export interface ParsedBulkItem {
-  domain: string;
-  phone?: string;
-}
-
-export function parseBulkInputLines(text: string): ParsedBulkItem[] {
-  if (!text || !text.trim()) return [];
-  const lines = text.split(/\r?\n/);
-  const items: ParsedBulkItem[] = [];
-  const seenDomains = new Set<string>();
-
-  const domainRegex = /(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}/i;
-  // Matches phone numbers like +1 469-591-7663, (469) 591-7663, 469-591-7663, +44 20 7946 0919, etc.
-  const phoneRegex = /(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{2,4}\)?[-.\s]?)?\d{3,4}[-.\s]?\d{3,5}/;
-
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
-    if (!line) continue;
-
-    // Check for delimiter like ' - ', ',', '|', '\t', or ';'
-    const domainMatch = line.match(domainRegex);
-    if (!domainMatch) continue;
-
-    const domain = domainMatch[0].toLowerCase().trim();
-    if (seenDomains.has(domain)) continue;
-
-    // Extract remainder of line or search for phone number pattern
-    let phone: string | undefined = undefined;
-
-    // Check if line contains a dash/separator like domain - phone
-    const sepSplit = line.split(/\s*[-–—|;,]\s*/);
-    if (sepSplit.length > 1) {
-      // Find the piece that isn't the domain and has phone digits
-      for (const piece of sepSplit) {
-        const pMatch = piece.match(phoneRegex);
-        if (pMatch && !piece.includes(domainMatch[0])) {
-          phone = piece.trim();
-          break;
-        }
-      }
-    }
-
-    if (!phone) {
-      // Try searching whole line minus the domain
-      const remainingLine = line.replace(domainMatch[0], '').trim();
-      const pMatch = remainingLine.match(phoneRegex);
-      if (pMatch && pMatch[0].replace(/\D/g, '').length >= 7) {
-        phone = pMatch[0].trim();
-      }
-    }
-
-    seenDomains.add(domain);
-    items.push({ domain, phone: phone || undefined });
-  }
-
-  return items;
-}
+import { parseBulkInputLines, ParsedBulkItem } from '../lib/bulkParser';
 
 export const BulkAudit: React.FC = () => {
   const { user, getToken } = useAuth();
@@ -195,65 +139,7 @@ export const BulkAudit: React.FC = () => {
   const [isDistributing, setIsDistributing] = useState(false);
   const [distributeSuccessNotice, setDistributeSuccessNotice] = useState<string | null>(null);
 
-  const handleLoadSample200 = () => {
-    const sampleData = [
-      { domain: "dallascommercialroofingcompany.net", phone: "+1 469-591-7663" },
-      { domain: "sunsetplumbingco.com", phone: "+1 817-552-9014" },
-      { domain: "bakerlawgroup.org", phone: "+1 972-401-8899" },
-      { domain: "metroautoexpress.com", phone: "+1 214-774-3200" },
-      { domain: "oakridgerealtypros.com", phone: "+1 469-820-1123" },
-      { domain: "brightsmileclinic.org", phone: "+1 817-664-9988" },
-      { domain: "apexconsultingllc.com", phone: "+1 214-902-5561" },
-      { domain: "beaconlogisticsllc.com", phone: "+1 972-331-4040" },
-      { domain: "summitcounselingcenter.org", phone: "+1 469-238-7712" },
-      { domain: "coastalhvacservice.com", phone: "+1 817-490-6621" },
-      { domain: "vanguardaccounting.org", phone: "+1 214-885-3309" },
-      { domain: "clearwaterpoolpros.com", phone: "+1 972-710-4491" },
-      { domain: "evergreenlandscapes.org", phone: "+1 469-501-8842" },
-      { domain: "precisionmechanicgroup.com", phone: "+1 817-331-2900" },
-      { domain: "northstartraveladvisors.com", phone: "+1 214-640-1289" },
-      { domain: "highlandinsuranceco.org", phone: "+1 972-882-7740" },
-      { domain: "primeveterinarycare.com", phone: "+1 469-910-6677" },
-      { domain: "cedarwoodcontractors.org", phone: "+1 817-720-3341" },
-      { domain: "horizonphysiotherapy.com", phone: "+1 214-551-9923" },
-      { domain: "valleydermatologysuite.org", phone: "+1 972-663-8810" },
-      { domain: "libertyroofingpros.com", phone: "+1 469-440-2219" },
-      { domain: "nexusdigitalmedia.org", phone: "+1 817-883-1150" },
-      { domain: "atlasmovingpros.com", phone: "+1 214-332-9090" },
-      { domain: "silverlinecouriers.org", phone: "+1 972-224-5511" },
-      { domain: "premierchiropracticcare.com", phone: "+1 469-771-3348" },
-    ];
 
-    const lines: string[] = sampleData.map(item => `${item.domain} - ${item.phone}`);
-    // If we want more to showcase up to 100 or 200, generate additional realistic items
-    const baseNames = [
-      "crestviewelectric", "goldenstateflooring", "heritageappraisals", "blueharboreats",
-      "frontiermortgages", "benchmarksecurity", "cascadecleaning", "sterlingwealthmgmt",
-      "zenithengineering", "clarityoptometry", "firstchoiceplumbing", "alliancelandtitle",
-      "dynamicprintworks", "gatewayrehabclinic", "paramountpainting", "apexpropertymgmt",
-      "vectorcreativestudio", "truenortharchitects", "trinityhealthcenter", "expressbailbonds",
-      "libertyfinancialadvisors", "solarisenergypros", "cornerstonepestcontrol", "radianthealthclinic",
-      "premiercommercialroof", "vanguardsecuritypros", "coastalbreezehvac", "apexlegalpartners",
-      "bluehorizonmarine", "summitpeakrealty", "everlastflooringco", "integrityautocare",
-      "solarpowersolutions", "aspenfamilydentistry", "bayviewcardiology", "centralpediatrics",
-      "deltaorthodontics", "eagleeyecare", "falconsecuritypros", "granitecountertoppros",
-      "harborwealthadvisors", "ironcladroofing", "jupiterlogistics", "kingstonlegalgroup",
-      "lakesidemarinapros", "meridianaccounting", "novusmarketinglabs", "olympusfitnessclub",
-      "pacificcoasthvac", "quantumtechrepairs", "riverfrontlawfirm", "sierraelectricpros"
-    ];
-
-    let areaCode = 214;
-    let seq = 100;
-    for (const name of baseNames) {
-      if (lines.length < 200) {
-        areaCode = (areaCode === 214 ? 469 : areaCode === 469 ? 817 : areaCode === 817 ? 972 : 214);
-        seq += 13;
-        lines.push(`${name}.com - +1 ${areaCode}-${seq.toString().padStart(3, '0')}-${(4000 + seq).toString()}`);
-      }
-    }
-
-    setInputText(lines.slice(0, 200).join('\n'));
-  };
 
   const handleDistributeTo4Callers = async () => {
     const completed = jobs.filter(j => j.status === 'completed');
@@ -278,7 +164,7 @@ export const BulkAudit: React.FC = () => {
             resultData: c.resultData,
           })),
           leadsPerCaller: 25,
-          assignerEmail: 'melbourne258@gmail.com',
+          assignerEmail: user?.email || 'admin@company.com',
         }),
       });
 
@@ -289,7 +175,7 @@ export const BulkAudit: React.FC = () => {
 
       const data = await res.json();
       setDistributeSuccessNotice(
-        `Split ${data.totalDistributed} leads equally to 4 callers by main assigner melbourne258@gmail.com without duplicates: Larry [@f1n3ssing_l4rry]: ${data.distribution?.larry || 0} leads | Kelly [@4mg_kyl14n]: ${data.distribution?.kelly || 0} leads | Ramadhan [@r4m4dh4n]: ${data.distribution?.ramadhan || 0} leads | Melbourne [@M3lbourn3]: ${data.distribution?.melbourne || 0} leads.`
+        `Successfully split ${data.totalDistributed} leads equally across the 4 team callers (25 unique leads each) without duplicates.`
       );
 
       // Cache completed jobs in localStorage for outreach
@@ -446,13 +332,6 @@ export const BulkAudit: React.FC = () => {
                     <Trash2 className="w-3 h-3" /> Clear
                   </button>
                 )}
-                <button
-                  type="button"
-                  onClick={handleLoadSample200}
-                  className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 cursor-pointer"
-                >
-                  + Load Sample Domains with Phone Numbers
-                </button>
               </div>
             </div>
 
@@ -460,7 +339,7 @@ export const BulkAudit: React.FC = () => {
               value={inputText}
               onChange={e => setInputText(e.target.value)}
               className="w-full h-56 p-4 text-sm font-mono border border-gray-300 rounded-sm focus:ring-1 focus:ring-gray-900 focus:border-gray-900 resize-y"
-              placeholder={`dallascommercialroofingcompany.net - +1 469-591-7663\napexconsultinggroup.com - +1 (214) 839-4412\nsunsetplumbingco.com - +1 817-552-9014\nbakerlawgroup.org - +1 972-401-8899\n... (Paste up to ${MAX_DOMAINS} lines with domains and phone numbers)`}
+              placeholder={`examplecompany.com - +1 (555) 012-3456\nclientdomain.org - +1 (555) 019-8765\n... (Paste up to ${MAX_DOMAINS} domains with optional phone numbers)`}
             />
 
             {/* Parsed List Full Inspector: Shows domains and detected phone numbers */}
@@ -636,11 +515,11 @@ export const BulkAudit: React.FC = () => {
                         </span>
                       )}
                       <span className="text-[10px] bg-indigo-700/80 text-indigo-200 font-semibold px-1.5 py-0.5 rounded-xs">
-                        Main Assigner: melbourne258@gmail.com
+                        {user?.email ? `Assigner: ${user.email}` : '25 Leads Per Caller'}
                       </span>
                     </h4>
                     <p className="text-xs text-indigo-200 mt-0.5">
-                      Distribute 25 unique leads to each of the 4 callers (Larry, Kelly, Ramadhan, Melbourne) without duplicate domains. Main assigner: <strong>melbourne258@gmail.com</strong>.
+                      Distribute 25 unique leads to each caller without duplicate domains.
                     </p>
                   </div>
                 </div>
@@ -650,7 +529,7 @@ export const BulkAudit: React.FC = () => {
                     onClick={handleDistributeTo4Callers}
                     disabled={isDistributing}
                     className="w-full sm:w-auto px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold rounded-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer shrink-0 shadow-sm"
-                    title="Split 25 unique leads each via main assigner melbourne258@gmail.com to Larry (@f1n3ssing_l4rry), Kelly (@4mg_kyl14n), Ramadhan (@r4m4dh4n), and Melbourne (@M3lbourn3)"
+                    title="Split 25 unique leads each to team callers without duplicates"
                   >
                     {isDistributing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Users className="w-3.5 h-3.5" />}
                     <span>{isDistributing ? "Splitting Leads..." : "Assign 25 Leads to 4 Callers"}</span>

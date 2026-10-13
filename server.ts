@@ -17,8 +17,7 @@ import {
   updateLeadStatus, 
   clearAllLeadAssignments,
   ensureCallersInitialized,
-  FIXED_CALLERS,
-  MAIN_ASSIGNER_EMAIL 
+  getRegisteredCallers
 } from "./src/db/leads.ts";
 
 export const app = express();
@@ -577,7 +576,10 @@ app.post("/api/auth/register", async (req, res) => {
     });
   } catch (error: any) {
     console.error("Registration error:", error);
-    res.status(400).json({ error: error.message || "Failed to create account." });
+    const msg = error.message && error.message.includes("already exists") 
+      ? "An account with this email already exists."
+      : "Unable to create account. Please check your information and try again.";
+    res.status(400).json({ error: msg });
   }
 });
 
@@ -605,7 +607,7 @@ app.post("/api/auth/login", async (req, res) => {
     });
   } catch (error: any) {
     console.error("Login error:", error);
-    res.status(500).json({ error: error.message || "Failed to log in." });
+    res.status(500).json({ error: "Invalid email or password, or service temporarily unavailable." });
   }
 });
 
@@ -1046,25 +1048,18 @@ app.delete(["/api/outreach/:id", "/api/outreach/:id/"], requireAuth, async (req:
 
 // ==========================================
 // ROLE-BASED CALLER AUTH & LEAD DISTRIBUTION
-// Callers: Larry, Kelly, Ramadhan, melbourne
-// Fixed codes:
-// Larry - @f1n3ssing_l4rry
-// Kelly - @4mg_kyl14n
-// Ramadhan - @r4m4dh4n
-// melbourne - @M3lbourn3
-// ==========================================
-
+// Dynamic team caller authentication via assigned passcode
 app.post(["/api/caller/login", "/api/caller/login/"], async (req, res) => {
   try {
     const { name, email, code } = req.body;
     if (!code) {
-      return res.status(400).json({ error: "Fixed user code is required to sign in as a caller." });
+      return res.status(400).json({ error: "Access passcode is required to sign in as a caller." });
     }
 
     const caller = await verifyCallerLogin(name, email, code);
     if (!caller) {
       return res.status(401).json({ 
-        error: "Invalid caller code. Please check your assigned code for Larry, Kelly, Ramadhan, or melbourne." 
+        error: "Invalid caller passcode. Please verify your assigned access code." 
       });
     }
 
@@ -1072,7 +1067,6 @@ app.post(["/api/caller/login", "/api/caller/login/"], async (req, res) => {
       callerKey: caller.callerKey,
       name: caller.name,
       email: caller.email || email,
-      fixedCode: caller.fixedCode,
     });
 
     res.json({
@@ -1082,7 +1076,6 @@ app.post(["/api/caller/login", "/api/caller/login/"], async (req, res) => {
         callerKey: caller.callerKey,
         name: caller.name,
         email: caller.email || email,
-        fixedCode: caller.fixedCode,
       },
     });
   } catch (error: any) {
@@ -1092,13 +1085,12 @@ app.post(["/api/caller/login", "/api/caller/login/"], async (req, res) => {
 });
 
 app.get(["/api/caller/callers", "/api/caller/callers/"], async (req, res) => {
-  res.json({
-    callers: FIXED_CALLERS.map(c => ({
-      callerKey: c.callerKey,
-      name: c.name,
-      codeFormat: "Requires fixed secret code",
-    })),
-  });
+  try {
+    const list = await getRegisteredCallers();
+    res.json({ callers: list });
+  } catch (error: any) {
+    res.json({ callers: [] });
+  }
 });
 
 app.get(["/api/caller/me", "/api/caller/me/"], requireAuth, async (req: AuthRequest, res) => {
@@ -1112,8 +1104,7 @@ app.get(["/api/caller/me", "/api/caller/me/"], requireAuth, async (req: AuthRequ
   });
 });
 
-// Distribute leads equally across the 4 callers without duplicates (e.g. 25 leads each from 100 targets)
-// Main Assigner Email: melbourne258@gmail.com
+// Distribute leads equally across callers without duplicates (25 leads each)
 app.post(["/api/leads/distribute", "/api/leads/distribute/"], async (req, res) => {
   try {
     const { leads, leadsPerCaller, assignerEmail } = req.body;
@@ -1122,7 +1113,7 @@ app.post(["/api/leads/distribute", "/api/leads/distribute/"], async (req, res) =
     }
 
     const quota = typeof leadsPerCaller === 'number' && leadsPerCaller > 0 ? leadsPerCaller : 25;
-    const effectiveAssigner = assignerEmail || MAIN_ASSIGNER_EMAIL;
+    const effectiveAssigner = assignerEmail || (req as any).user?.email || "team-admin@company.com";
     const result = await distributeLeadsEqually(leads, quota, effectiveAssigner);
     res.json(result);
   } catch (error: any) {
@@ -1133,7 +1124,7 @@ app.post(["/api/leads/distribute", "/api/leads/distribute/"], async (req, res) =
 
 app.get(["/api/leads/assigner", "/api/leads/assigner/"], async (req, res) => {
   res.json({
-    mainAssignerEmail: MAIN_ASSIGNER_EMAIL,
+    mainAssignerEmail: (req as any).user?.email || "team-admin@company.com",
     role: "Lead Distribution Manager",
   });
 });
@@ -1172,29 +1163,23 @@ app.get(["/api/leads/all-assigned", "/api/leads/all-assigned/"], async (req, res
   try {
     const allLeads = await getAllAssignedLeads();
     
-    // Group by caller
-    const grouped: Record<string, any[]> = {
-      larry: [],
-      kelly: [],
-      ramadhan: [],
-      melbourne: [],
-    };
+    // Group dynamically by caller
+    const grouped: Record<string, any[]> = {};
+    const counts: Record<string, number> = {};
     for (const lead of allLeads) {
       if (!grouped[lead.callerKey]) {
         grouped[lead.callerKey] = [];
       }
       grouped[lead.callerKey].push(lead);
     }
+    for (const key of Object.keys(grouped)) {
+      counts[key] = grouped[key].length;
+    }
 
     res.json({
       total: allLeads.length,
       grouped,
-      counts: {
-        larry: grouped.larry.length,
-        kelly: grouped.kelly.length,
-        ramadhan: grouped.ramadhan.length,
-        melbourne: grouped.melbourne.length,
-      },
+      counts,
     });
   } catch (error: any) {
     console.error("Get all assigned leads error:", error);
@@ -1202,7 +1187,26 @@ app.get(["/api/leads/all-assigned", "/api/leads/all-assigned/"], async (req, res
   }
 });
 
-// Update call outcome status and notes for a lead
+// Update call outcome status and notes for a lead (POST and PATCH supported)
+app.post(["/api/leads/update-status", "/api/leads/update-status/"], async (req, res) => {
+  try {
+    const { id, status, notes } = req.body;
+    const numId = parseInt(id, 10);
+    if (isNaN(numId)) {
+      return res.status(400).json({ error: "Invalid lead ID" });
+    }
+    if (!status) {
+      return res.status(400).json({ error: "Status is required." });
+    }
+
+    const updated = await updateLeadStatus(numId, status, notes);
+    res.json({ success: true, lead: updated });
+  } catch (error: any) {
+    console.error("Update lead status error:", error);
+    res.status(500).json({ error: error.message || "Failed to update lead status." });
+  }
+});
+
 app.patch(["/api/leads/:id/status", "/api/leads/:id/status/"], async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);

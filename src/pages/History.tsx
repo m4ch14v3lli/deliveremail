@@ -63,13 +63,13 @@ export const History: React.FC = () => {
 
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to fetch audits from database');
+        throw new Error(data.error || 'Failed to fetch saved audits');
       }
 
       setAudits(data.audits || []);
     } catch (err: any) {
       console.error('Failed to fetch audits:', err);
-      setError(err.message || 'Unable to load audit history from PostgreSQL database.');
+      setError(err.message || 'Unable to load audit history. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -204,7 +204,7 @@ export const History: React.FC = () => {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-gray-200 pb-4">
           <div>
             <h2 className="text-xl font-bold text-gray-900">Audit History</h2>
-            <p className="text-xs text-gray-500 mt-0.5">Persisted in Cloud SQL PostgreSQL database</p>
+            <p className="text-xs text-gray-500 mt-0.5">Review and manage past domain deliverability scans</p>
           </div>
           <div className="flex items-center gap-3">
             {audits.length > 0 && (
