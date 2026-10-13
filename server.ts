@@ -1051,12 +1051,13 @@ app.delete(["/api/outreach/:id", "/api/outreach/:id/"], requireAuth, async (req:
 // Dynamic team caller authentication via assigned passcode
 app.post(["/api/caller/login", "/api/caller/login/"], async (req, res) => {
   try {
-    const { name, email, code } = req.body;
-    if (!code) {
+    const { name, email, code, passcode } = req.body || {};
+    const accessCode = (code || passcode || "").trim();
+    if (!accessCode) {
       return res.status(400).json({ error: "Access passcode is required to sign in as a caller." });
     }
 
-    const caller = await verifyCallerLogin(name, email, code);
+    const caller = await verifyCallerLogin(name, email, accessCode);
     if (!caller) {
       return res.status(401).json({ 
         error: "Invalid caller passcode. Please verify your assigned access code." 
